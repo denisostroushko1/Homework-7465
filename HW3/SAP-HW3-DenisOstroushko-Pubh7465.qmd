@@ -107,125 +107,129 @@ insulin_f_with_covariates <-
 
 ```
 
-```{r explore the data , eval = F}
 
-glucose_f_with_covariates %>% 
-  ggplot(aes(x = time_under_obs, y = blood_glucose)) + 
-  theme_classic() + 
-  geom_line(aes(group = pt_id),  alpha = 0.25) + 
-  geom_smooth(color = "red", se = T, aes(group = 1))
+# Introduction 
+
+Insulin resistance and persistent hyperglycemia are common issues encountered in hospitalized patients. While the majority of hyperglycemic patients respond adequately to intravenous insulin infusion rates of 2.0-5.0 mU/(kg*min), some patients exhibit severe insulin resistance resulting in sustained high blood glucose levels (>200 mg/dL) despite high-dose insulin therapy in excess of 20 units/hr (1). The mechanism for this severe insulin resistance is not fully understood but is likely multifactorial. 
+Persistent, severe hyperglycemia in hospitalized patients can lead to a number of adverse outcomes including impaired wound healing, higher infection rates, longer lengths of stay, and increased mortality. Therefore, alternative treatment strategies are needed for patients with severe insulin resistance to help improve glycemic control.
+
+One proposed therapy is intravenous chromium infusion. Chromium is an essential mineral that has been shown to enhance insulin activity and signaling. Small trials have demonstrated that intravenous chromium chloride infusions can decrease blood glucose levels. The exact mechanism of action of chromium in enhancing insulin activity is still under investigation but may work by potentiating insulin binding to receptors and improving phosphorylation cascades, and altering gene expression. Chromium treatment aims to overcome insulin resistance allowing blood glucose levels to decline at lower doses of insulin administration.
+
+# Dataset 
+
+The data come from a retrospective analysis of electronic medical records of hospitalized patients who received intravenous chromium infusion for severe insulin resistance. Records for patients were ontaned between 2008 and 2011. Eligible patients were identified by searching diagnosis codes and medication administration records for the following inclusion criteria:
+
+* Age 18 years or older
+
+* Received a continuous intravenous insulin infusion at a rate exceeding 20 units/hour
+
+* Had persistence hyperglycemia with blood glucose levels sustained over 200 mg/dL while on high-dose insulin infusion
+
+* Were administered intravenous chromium chloride infusion at a dose of 20 mcg/hr for 10-15 hours (total dose 200-240 mcg) as an adjunctive therapy.
+
+
+Specific data collected from the hospital records of the 14 eligible patients meeting inclusion criteria included blood glucose values, insulin infusion rates, dates and times of glucose measurements and insulin rate changes, as well as any documented episodes of hypoglycemia. The number of glucose measurements per patient ranged from 26 to 61. Collected data captures insulin injection rates and blood glucose levels before, during, and after injection of chromium. 
+
+# Exploratory Data Analysis 
+
+
+
+```{r}
+#| resutls: hide
+#| include: false
+
+
+CreateTableOne(
+  data = demog %>% 
+    rename(`Weight (kg)` = `weight (kg)`, 
+           `Prior Insulin Use` = `pre.insulin.use`), 
+  
+  vars = c("Age (yr)", "Sex", "Weight (kg)", "Prior Insulin Use", "Steroid use prior to or during Cr", "Outcome"), 
+  factorVars = c("Sex", "Prior Insulin Use", "Steroid use prior to or during Cr", "Outcome")
+) %>% 
+  print() -> tbl1
+```
+
+@tbl-tbl1 provides a summary of the population available for the study. While the number of patients is small, there is enough 
+observational data to make inferences about the blood glucose and insulin injection rates for this subset of patients. 
+
+```{r}
+#| label: tbl-tbl1
+#| tbl-cap: "Demograhic and Basic Clinical Characteristic of Patients"
+
+
+tbl1 %>% 
+  kable(booktabs = T)
+
+```
+
+@fig-gluc-1 visualizes the trajectory of blood glucose levels for patients of interest. @fig-ins-1 shows rates of insulin injection per hour. The timeline is separated into three periods: before, during, and after chromium injection. Patients begin this intense therapy because they are resistant to the insulin injections, which causes blood sugar levels to elevate. 
+Chromium therapy takes 10-12 hours to complete, according to the background information provided. While patients are on treatment, I speculate that chromium starts to interact with the molecules and begins to take effect, however, it is likely that all 10 hours are needed for the effect to manifest in full. Therefore, I decided to classify the timeline for each patient 
+into three categories, which will be the primary variable of interest in the analysis. 
+
+```{r explore the data}
+#| label: fig-gluc-1
+#| fig-cap: "Dahsed lines separate the timeline into Before/During/After Chromium Infusion Periods"
 
 glucose_f_with_covariates %>% 
   ggplot(aes(x = time_diff, y = blood_glucose)) + 
   theme_classic() + 
-  geom_vline(xintercept = 0, color = "black", linewidth = 1) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5)) + 
+  geom_vline(xintercept = 0, color = "black", linewidth = 1, linetype = "dashed") +
+  geom_vline(xintercept = 10*3600, color = "black", linewidth = 1, linetype = "dashed") + 
   geom_line(aes(group = pt_id),  alpha = 0.25) + 
-  geom_smooth(color = "red", se = T, aes(group = 1)) 
+  geom_smooth(color = "red", se = T, aes(group = 1)) + 
+  scale_x_continuous(labels = function(x){paste0(abs(round(x/3600)), 
+                                                 case_when(round(x/3600) < 0 ~ " Hr Before CR", 
+                                                           T ~ " Hr After CR")) %>% ifelse(round(x/3600) == 0, "CR Start", .) %>% {.}}, 
+                     breaks = seq(from = min(glucose_f_with_covariates$time_diff), 
+                                  to = max(glucose_f_with_covariates$time_diff), 
+                                  length.out = 10)) + 
+  
+  labs(y = "Blood Glucose Levels", 
+       x = "Observational Time", 
+       title = "Glucose Levels Timelines for Staudy Population") 
 ```
 
-```{r explore data 2, eval = F}
+```{r explore data 2}
+#| label: fig-ins-1
+#| fig-cap: "Dahsed lines separate the timeline into Before/During/After Chromium Infusion Periods"
+
 insulin_f_with_covariates %>% 
   ggplot(aes(x = time_diff, y = insulin_units_hr)) + 
   theme_classic() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5)) + 
+  geom_vline(xintercept = 0, color = "black", linewidth = 1, linetype = "dashed") +
+  geom_vline(xintercept = 10*3600, color = "black", linewidth = 1, linetype = "dashed") + 
   geom_line(aes(group = pt_id),  alpha = 0.25) + 
-  geom_smooth(color = "blue", se = T, aes(group = 1))
-
-insulin_f_with_covariates %>% 
-  ggplot(aes(x = time_diff, y = insulin_units_hr)) + 
-  theme_classic() + 
-  geom_vline(xintercept = 0, color = "black", linewidth = 1) + 
-  geom_line(aes(group = pt_id),  alpha = 0.25) + 
-  geom_smooth(color = "blue", se = T, aes(group = 1)) 
-```
-
-```{r ,eval = F}
-##########################
-##########################
-# combine and then plot to see if the results are any different 
-
-rbind(
-  insulin_f %>% 
-    mutate(insulin_units_hr_scale = scale(insulin_units_hr), 
-           type = "insulin levels"
-           ) %>% 
-    select(-obs_id, -insulin_units_hr) %>% 
-    rename(measurement = insulin_units_hr_scale)
-  ,
-  glucose_f %>% 
-    mutate(blood_glucose_scale = scale(blood_glucose), 
-           type = "glucose levels"
-           ) %>% 
-    select(-obs_id,- blood_glucose) %>% 
-    rename(measurement = blood_glucose_scale)
-) %>% 
-  arrange(pt_id, datetime) %>% 
-  group_by(pt_id) %>% 
-  mutate(obs_id = 1:n()) -> combined_df
-
-ggplot(data = combined_df, 
-       aes(x = obs_id, y = measurement, group = pt_id, color = type)) + 
-  theme_classic() + 
-  geom_line(alpha = 0.25) + 
-  geom_smooth(aes(group = type), se = T)
-
-
-####################
-# combine the data in such a way that allows modeling of glucose as insuling 
-
-
-modeling_data = 
-  merge(
-    x = insulin_f %>% select(-date, -time, -obs_id), 
-    y = glucose_f %>% select(-date, -time, -obs_id),
-    by = c("pt_id", "datetime")
-  )
-
-modeling_data_full = 
-  merge(
-    x = insulin_f %>% select(-date, -time, -obs_id), 
-    y = glucose_f %>% select(-date, -time, -obs_id),
-    by = c("pt_id", "datetime"), 
-    all = T
-  )
-
-nrow(modeling_data_full)
-```
-
-```{r try and fit a model glucose, eval=F}
-
-glucose_gee <- geeglm(blood_glucose ~ poly(time_diff, 2) + age + sex + weight_kg + pre_insulin_use + steroid, 
-                      data = glucose_f_with_covariates, 
-                      id = pt_id,
-                      corstr = "independence")
-glucose_gee %>% tidy() %>% 
-  mutate(p.value = round(p.value, 5))
-
-plot_model(model = glucose_gee) + 
-  theme_classic()
-
-plot_model(model = glucose_gee, 
-           type = "eff", 
-           terms = "time_diff") + 
-  geom_vline(xintercept = 0, color = "black", linewidth = 1) + 
-  theme_classic()
-```
-
-```{r try model insulin, eval = F}
-##################################
-
-insulin_gee <- geeglm(insulin_units_hr ~ poly(time_diff, 3) + age + sex + weight_kg + pre_insulin_use + steroid, 
-                      data = insulin_f_with_covariates, 
-                      id = pt_id,
-                      corstr = "independence")
-
-insulin_gee %>% tidy() %>% 
-  mutate(p.value = round(p.value, 5))
-
-plot_model(model = insulin_gee, 
-           type = "eff", 
-           terms = "time_diff") + 
-  geom_vline(xintercept = 0, color = "black", linewidth = 1) + 
-  theme_classic()  
-
+  geom_smooth(color = "blue", se = T, aes(group = 1)) + 
+  scale_x_continuous(labels = function(x){paste0(abs(round(x/3600)), 
+                                                 case_when(round(x/3600) < 0 ~ " Hr Before CR", 
+                                                           T ~ " Hr After CR")) %>% ifelse(round(x/3600) == 0, "CR Start", .) %>% {.}}, 
+                     breaks = seq(from = min(insulin_f_with_covariates$time_diff), 
+                                  to = max(insulin_f_with_covariates$time_diff), 
+                                  length.out = 10)) + 
+  
+  labs(y = "Insulin/HR Rate Levels", 
+       x = "Observational Time", 
+       title = "Insultin Injection Rate Timelines for Staudy Population") 
 
 ```
+
+# Methods 
+
+We will analyze the average blood glucose level in the population of patients and the average rates of insulin per hour injections using General Estimating Equation (GEE) models. 
+The goal of the treatment is to help the body of the patient to absorb insulin and help mitigate elevated blood sugar levels. Therefore, we want to compare average values of blood glucose levels between the three periods of time. We wish to find evidence that the sugar blood levels after treatment are lower than those before the chromium injection treatment. 
+Additionally, we want to see if the injection rates of insulin reduce, implying that the treatment has worked and the patients requires lower levels of active drug. 
+Significant reduction in the blood glucose levels and insulin injection rates will imply that the treatment has worked according to the medical hypothesis. 
+
+In order to conduct statistical testing of the effect of treatment on determined outcomes we will use GEE regression model to account for the correlated nature of measurements within the 
+patients. We will use this regression model to also adjust for age, sex, weight (in kilograms), and prior use of insulin injections to remove potential confounding and obtain marginal 
+effects and average differences between the three periods of observation of patients. 
+
+We will construct correlation matrices to determine appropriate correlation structure for the GEE models and add results of this development step to the appendix. 
+We will consider other correlation structures as a sensitivity analysis step in order to verify that cluster size imbalance does not affect the results of out analysis greatly. 
+
+All analyses will be conducted using R version 4.3.1 at the 5% significance level. 
+
+

@@ -1,0 +1,309 @@
+---
+title: "Statisticail Analysis Plan"
+subtitle:  "Chromium infusion in hospitalized patients with severe insulin resistance"
+author: "Denis Ostroushko"
+format: 
+  pdf: 
+    geometry: 
+    - a4paper 
+    - top=20mm
+    - left=20mm 
+execute: 
+  echo: false 
+  message: false 
+  warning: false 
+---
+
+```{r}
+options(knitr.kable.NA = '', 
+        scipen = 99999)
+
+library(gridExtra)
+library(kableExtra)
+library(tableone)
+library(broom)
+library(geepack)
+library(tidyverse)
+library(ggeffects)
+library(sjPlot)
+```
+
+
+```{r fucntion name: process_data}
+
+process_data <- function(data){
+  
+  colnames(data) <- gsub(" ", "_", colnames(data)) 
+  colnames(data) <- gsub("/", "_", colnames(data))
+  colnames(data) <- colnames(data) %>% tolower()
+  
+  data$date_d <- as.Date(data$date, format = "%m/%d/%Y")
+  data$time_t <- hms::as_hms(data$time)
+  
+  data <- 
+    data %>% 
+    select(-date, -time) %>% 
+    rename(date = date_d, 
+           time = time_t)
+  
+  data$datetime <- as.POSIXct(paste(data$date, format(data$time, "%H:%M:%S")), format = "%Y-%m-%d %H:%M:%S")
+  
+  data <- 
+    data %>% 
+      group_by(pt_id) %>% 
+      mutate(time_under_obs = as.numeric(datetime - min(datetime))/60)
+    
+  data <- 
+    data %>% 
+    arrange(pt_id, datetime) %>% 
+    group_by(pt_id) %>% 
+    mutate(obs_id = 1:n()) %>% 
+    ungroup()
+  
+  return(data)
+
+}
+
+```
+
+
+```{r load and costruct the data }
+
+glucose <- read_csv("Cr glucose-1.csv") 
+glucose_f <- process_data(glucose)
+
+insulin <- read_csv("Cr insulin-3.csv")
+insulin_f <- process_data(insulin)
+
+demog <- read_csv("Cr demographics-1.csv")
+
+demog$date_d <- as.Date(demog$`Date Cr received`, format = "%m/%d/%Y")
+demog$time_t <- hms::as_hms(demog$`Start time`)
+
+demog$datetime <- as.POSIXct(paste(demog$date_d, format(demog$time_t, "%H:%M:%S")), format = "%Y-%m-%d %H:%M:%S")
+
+
+demog2 <- demog[,c(1:4, 16, 21, 34)]
+colnames(demog2) <- c("pt_id", "age", "sex", "weight_kg", "pre_insulin_use", "steroid", "start_cr_datetime")
+```
+
+```{r}
+
+glucose_f_with_covariates <- 
+  glucose_f %>% 
+  left_join(
+    demog2, 
+    by = "pt_id"
+  ) %>% 
+  mutate(time_diff = as.numeric(datetime - start_cr_datetime))
+
+insulin_f_with_covariates <- 
+  insulin_f %>% 
+  left_join(
+    demog2, 
+    by = "pt_id"
+  ) %>% 
+  mutate(time_diff = as.numeric(datetime - start_cr_datetime))
+
+```
+
+```{r explore the data , eval = F}
+
+glucose_f_with_covariates %>% 
+  ggplot(aes(x = time_under_obs, y = blood_glucose)) + 
+  theme_classic() + 
+  geom_line(aes(group = pt_id),  alpha = 0.25) + 
+  geom_smooth(color = "red", se = T, aes(group = 1))
+
+glucose_f_with_covariates %>% 
+  ggplot(aes(x = time_diff, y = blood_glucose)) + 
+  theme_classic() + 
+  geom_vline(xintercept = 0, color = "black", linewidth = 1) + 
+  geom_line(aes(group = pt_id),  alpha = 0.25) + 
+  geom_smooth(color = "red", se = T, aes(group = 1)) 
+```
+
+```{r explore data 2, eval = F}
+insulin_f_with_covariates %>% 
+  ggplot(aes(x = time_diff, y = insulin_units_hr)) + 
+  theme_classic() + 
+  geom_line(aes(group = pt_id),  alpha = 0.25) + 
+  geom_smooth(color = "blue", se = T, aes(group = 1))
+
+insulin_f_with_covariates %>% 
+  ggplot(aes(x = time_diff, y = insulin_units_hr)) + 
+  theme_classic() + 
+  geom_vline(xintercept = 0, color = "black", linewidth = 1) + 
+  geom_vline(xintercept = 10*3600, color = "black", linewidth = 1) + 
+  geom_line(aes(group = pt_id),  alpha = 0.25) + 
+  geom_smooth(color = "blue", se = T, aes(group = 1)) 
+```
+
+```{r ,eval = F}
+##########################
+##########################
+# combine and then plot to see if the results are any different 
+
+rbind(
+  insulin_f %>% 
+    mutate(insulin_units_hr_scale = scale(insulin_units_hr), 
+           type = "insulin levels"
+           ) %>% 
+    select(-obs_id, -insulin_units_hr) %>% 
+    rename(measurement = insulin_units_hr_scale)
+  ,
+  glucose_f %>% 
+    mutate(blood_glucose_scale = scale(blood_glucose), 
+           type = "glucose levels"
+           ) %>% 
+    select(-obs_id,- blood_glucose) %>% 
+    rename(measurement = blood_glucose_scale)
+) %>% 
+  arrange(pt_id, datetime) %>% 
+  group_by(pt_id) %>% 
+  mutate(obs_id = 1:n()) -> combined_df
+
+ggplot(data = combined_df, 
+       aes(x = obs_id, y = measurement, group = pt_id, color = type)) + 
+  theme_classic() + 
+  geom_line(alpha = 0.25) + 
+  geom_smooth(aes(group = type), se = T)
+
+
+####################
+# combine the data in such a way that allows modeling of glucose as insuling 
+
+
+modeling_data = 
+  merge(
+    x = insulin_f %>% select(-date, -time, -obs_id), 
+    y = glucose_f %>% select(-date, -time, -obs_id),
+    by = c("pt_id", "datetime")
+  )
+
+modeling_data_full = 
+  merge(
+    x = insulin_f %>% select(-date, -time, -obs_id), 
+    y = glucose_f %>% select(-date, -time, -obs_id),
+    by = c("pt_id", "datetime"), 
+    all = T
+  )
+
+nrow(modeling_data_full)
+```
+
+```{r try and fit a model glucose, eval=F}
+
+glucose_gee <- geeglm(blood_glucose ~ poly(time_diff, 2) + age + sex + weight_kg + pre_insulin_use + steroid, 
+                      data = glucose_f_with_covariates, 
+                      id = pt_id,
+                      corstr = "independence")
+glucose_gee %>% tidy() %>% 
+  mutate(p.value = round(p.value, 5))
+
+plot_model(model = glucose_gee) + 
+  theme_classic()
+
+plot_model(model = glucose_gee, 
+           type = "eff", 
+           terms = "time_diff") + 
+  geom_vline(xintercept = 0, color = "black", linewidth = 1) + 
+  theme_classic()
+```
+
+```{r try and fit a model glucose with pre-post variable , eval=F}
+
+glucose_f_with_covariates$pre_post <- with(glucose_f_with_covariates, 
+                                           ifelse(time_diff <= 0, "Pre", "Post") %>% as.factor() %>% 
+                                             factor(., levels = c("Pre", "Post")))
+
+glucose_gee2 <- geeglm(blood_glucose ~ pre_post + age + sex + weight_kg + pre_insulin_use + steroid, 
+                      data = glucose_f_with_covariates, 
+                      id = pt_id,
+                      corstr = "independence")
+glucose_gee2 %>% tidy() %>% 
+  mutate(p.value = round(p.value, 5))
+
+plot_model(model = glucose_gee2, 
+           type = "eff", 
+           terms = "pre_post") + 
+  theme_classic()
+```
+
+```{r try model insulin, eval = F}
+##################################
+
+
+insulin_f_with_covariates$pre_post <- with(insulin_f_with_covariates, 
+                                           ifelse(time_diff <= 0, "Pre", "Post") %>% as.factor() %>% 
+                                             factor(., levels = c("Pre", "Post")))
+
+insulin_gee2 <- geeglm(insulin_units_hr ~ pre_post + age + sex + weight_kg + pre_insulin_use + steroid, 
+                      data = insulin_f_with_covariates, 
+                      id = pt_id,
+                      corstr = "independence")
+
+insulin_gee2 %>% tidy() %>% 
+  mutate(p.value = round(p.value, 5))
+
+plot_model(model = insulin_gee2, 
+           type = "eff", 
+           terms = "pre_post")
+
+
+```
+
+```{r try models that glucose with three periods, eval = F}
+
+glucose_f_with_covariates <- 
+  glucose_f_with_covariates %>% 
+  
+  mutate(period = case_when(time_diff <= 0 ~ "Pre", 
+                            time_diff >= 10*3600 ~ "Post", 
+                            T ~ "Discard") %>% 
+           factor(., levels = c("Pre", "Discard", "Post")))
+
+nrow(glucose_f_with_covariates)
+nrow(glucose_f_with_covariates %>% filter(period != "Discard"))
+
+test_glucose_model <- 
+  geeglm(
+    blood_glucose ~ period + age + sex + weight_kg + pre_insulin_use + steroid, 
+    data = glucose_f_with_covariates, 
+    id = pt_id,
+    corstr = "independence")
+
+test_glucose_model %>% tidy() %>% 
+  mutate(p.value = round(p.value, 5))
+
+plot_model(model = test_glucose_model, 
+           type = "eff", 
+           terms = "period")
+
+```
+
+```{r try models that insulin with three periods, eval = F}
+
+insulin_f_with_covariates <- 
+  insulin_f_with_covariates %>% 
+  
+  mutate(period = case_when(time_diff <= 0 ~ "Pre", 
+                            time_diff >= 10*3600 ~ "Post", 
+                            T ~ "Discard") %>% 
+           factor(., levels = c("Pre", "Discard", "Post")))
+
+test_insulin_model <- 
+  geeglm(
+    insulin_units_hr ~ period + age + sex + weight_kg + pre_insulin_use + steroid, 
+    data = insulin_f_with_covariates, 
+    id = pt_id,
+    corstr = "independence")
+
+test_insulin_model %>% tidy() %>% 
+  mutate(p.value = round(p.value, 5))
+
+plot_model(model = test_insulin_model, 
+           type = "eff", 
+           terms = "period")
+
+```
