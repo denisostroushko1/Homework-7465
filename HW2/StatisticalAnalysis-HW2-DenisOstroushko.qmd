@@ -1,0 +1,467 @@
+---
+title: "Laryngospoce Analysis"
+author: "Denis Ostroushko"
+format: pdf
+execute: 
+  echo: false 
+  message: false 
+  warning: false 
+---
+
+```{r}
+options(knitr.kable.NA = '', 
+        scipen = 99999)
+
+
+library(survival)
+library(survminer)
+library(gridExtra)
+library(kableExtra)
+library(tableone)
+library(broom)
+library(tidyverse)
+
+
+```
+
+```{r load initial data set }
+
+lar_df <- read.csv('Laryngoscope.csv')
+colnames(lar_df) <- tolower(colnames(lar_df))
+
+lar_df <- 
+  lar_df %>% 
+  mutate(randomization_char = ifelse(randomization == 0, "Macintosh #4 blade", "Pentax AWS"), 
+         randomization_char = factor(randomization_char, levels = c("Macintosh #4 blade", "Pentax AWS")), 
+         subject_id = 1:nrow(.))
+```
+
+```{r extra data prep }
+
+# <!-- PUTTING THE DATA INTO THE CORRECT FORM TO ANALYZE ACCORDING TO THE DATA DESCRIPTION AND BACKGROUD ----> 
+
+lar_df_long <- 
+  lar_df %>% 
+    select(subject_id, attempt1_time, attempt2_time, attempt3_time) %>% 
+    pivot_longer(cols = c("attempt1_time", "attempt2_time", "attempt3_time"), 
+                 names_to = "type", 
+                 values_to = "time"
+                 ) %>% 
+    arrange(subject_id, type) %>% 
+    group_by(subject_id) %>% 
+    mutate(attempt = 1:n()) %>% 
+    ungroup() %>% 
+    select(-type) %>% 
+  
+  left_join(
+    lar_df %>% 
+      select(subject_id, attempt1_s_f, attempt2_s_f, attempt3_s_f ) %>% 
+      pivot_longer(cols = c("attempt1_s_f", "attempt2_s_f", "attempt3_s_f"), 
+                   names_to = "type", 
+                   values_to = "s_f"
+                   ) %>% 
+      arrange(subject_id, type) %>% 
+      group_by(subject_id) %>% 
+      mutate(attempt = 1:n()) %>% 
+      ungroup() %>% 
+      select(-type), 
+    
+    by = c("subject_id", "attempt")
+  ) %>% 
+  
+  left_join(
+    lar_df %>% 
+      select(subject_id, randomization, attempt2_assigned_method, attempt3_assigned_method ) %>% 
+      pivot_longer(cols = c("randomization", "attempt2_assigned_method", "attempt3_assigned_method"), 
+                   names_to = "type", 
+                   values_to = "method"
+                   ) %>% 
+      arrange(subject_id) %>% 
+      group_by(subject_id) %>% 
+      mutate(attempt = 1:n()) %>% 
+      ungroup() %>% 
+      select(-type), 
+    
+    by = c("subject_id", "attempt")
+  ) %>% 
+  
+  select(subject_id, attempt, time, method, s_f) %>% 
+  
+  left_join(
+    lar_df %>% select(subject_id, randomization) %>% rename(original_method = randomization), 
+    by = "subject_id"
+  ) 
+
+first_try_s <- 
+  lar_df_long %>% 
+  filter(s_f == 1 & attempt == 1)
+
+cross_overs <- 
+  lar_df_long %>% 
+       filter(!subject_id %in% (
+         first_try_s %>% select(subject_id) %>% unlist()
+       ))%>% 
+  group_by(subject_id) %>% 
+  mutate(cross_over_flag = ifelse(original_method != method, 1, 0)) %>% 
+  filter(cross_over_flag == 0) %>% 
+  mutate(total_time = ifelse(sum(time) >= 100, 100, sum(time))) %>% 
+  filter(time == max(time)) %>% 
+  ungroup() %>% 
+  select(subject_id, method, s_f, total_time) %>% 
+  rename(time = total_time)
+
+correct_surviavl_data = 
+  rbind(cross_overs, 
+        first_try_s %>% select(subject_id, method, s_f, time)) %>% unique() %>% 
+  arrange(subject_id) %>% 
+  
+  mutate(Group = ifelse(method == 0, "Macintosh #4 blade", "Pentax AWS")  , 
+       Group = factor(Group, levels = c("Macintosh #4 blade", "Pentax AWS"))
+       )
+
+correct_surviavl_data <- 
+  correct_surviavl_data %>% 
+  left_join(
+    lar_df %>% select(subject_id, age, gender, asa, bmi, mallampati, attempts, failures, bleeding, ease, sore_throat, view, intubation_overall_s_f, attempts), 
+    by = "subject_id"
+  )
+
+```
+
+
+# Introduction
+
+This study aims to compare the Pentax AWS laryngoscope to the conventional Macintosh for intubation times and success rates in obese patients undergoing elective surgery. The research questions are whether the Pentax device achieves faster intubation and higher success compared to the Macintosh in this population.
+
+# Dataset
+
+The data set contains 99 patients randomized to the Macintosh (n=49) or Pentax (n=50) groups. 
+Potential explanatory variables include age, gender, BMI, Mallampati score predicting ease of
+intubation, Cormack-Lehane grade of glottic view. Primary outcome variable is time to successful intubation. 
+
+The primary outcome of time to intubation was defined as time from start
+of the first attempt of the insertion of the laryngoscope until a capnogram signal was obtained.
+
+During intubation, if an attempt with the assigned
+device failed, then another attempt or an alternate technique was used.
+Intubation using the assigned method within 100 seconds regardless of
+number of attempts was considered successful. For patients who crossed
+over to the other method or whose tracheas were intubated after 100
+seconds, time to intubation was censored at that technique crossing point
+or 100 seconds, and labeled as a failure in the analysis.
+
+Therefore, we defined primary outcome as the time until successful intubation using assigned method, and 
+observed times were censored either after 100 seconds or at the point where a medical team used a different 
+laryngoscope method. 
+
+Among other outcomes, a score on the 0 to 100 scale for the ease of intubation and presence of any sore throat 
+were used as the secondary outcomes. 
+
+There was one observation per patient in the analysis data set. 
+
+# Exploratory Data Analysis 
+
+We present descriptive statistics of demographic and clinical characteristics at baseline for two groups: Macintosh #4 blade and Pentax AWS in @tbl-table-1. The sample consists of 49 individuals in the Macintosh #4 blade group and 50 individuals in the Pentax AWS group.
+
+The mean (SD) age for the Macintosh #4 blade group is 48.51 (14.07), and for the Pentax AWS group, it is 50.32 (12.19). The standardized mean difference (SMD) between the age group means is 0.137, suggesting a negligible difference due to random variation in the sample. 
+
+The number of males in the Macintosh #4 blade group is 10 (20.4%), while in the Pentax AWS group, it is 11 (22.0%). The standardized mean difference in gender distribution is 0.039, indicating a minimal standardized difference.
+
+The mean (SD) BMI for the Macintosh #4 blade group is 42.45 (5.91), and for the Pentax AWS group, it is 41.37 (4.44). The SMD for BMI is 0.208, suggesting a moderate standardized difference.
+
+The percentage of individuals with a 'Good' Cormack-Lehane Grade in the Macintosh #4 blade group is 77.6%, and in the Pentax AWS group, it is 86.0%. The SMD for Cormack-Lehane Grade is 0.220, indicating a small to moderate standardized difference.
+
+The mean (SD) Mallampati Score for the Macintosh #4 blade group is 1.98 (0.76), and for the Pentax AWS group, it is 1.88 (0.94). The SMD for Mallampati Score is 0.116, suggesting a small standardized difference.
+
+The standardized mean differences (SMD) help confirm the balance between the groups for each variable. 
+
+```{r table one}
+#| results: hide
+#| include: false
+
+CreateTableOne(
+  data = correct_surviavl_data, 
+  vars = c("age", "gender", "bmi", "view", "mallampati"), 
+  factorVars = c("gender", "view"), 
+  strata = "Group", 
+  test = F, 
+  smd = T
+) -> table_one
+
+table_one_print = print(table_one, smd = T)
+
+rownames(table_one_print) <- c("N", "Age (Mean (SD))", "N Male (%)", "BMI (Mean (SD))", "'Good' Cormack-Lehane Grade N (%)", "Mallampati Score")
+
+```
+
+```{r table one render }
+#| label: tbl-table-1
+#| tbl-cap: "Descriptive Statistics of Demographic and Clinical Characteristics at Baseline"
+
+table_one_print %>% 
+  kable(booktabs = T , 
+        align = c('c', 'c', 'c') 
+        ) %>% 
+  kable_styling(latex_options = c('hold_position'))
+
+```
+
+
+
+```{r distribution of time to success or censoring, eval = F }
+#| label: fig-dist-time-to-event
+#| fig-cap: "Distirbution of time until successful intubation by group"
+
+ggplot(
+  data = correct_surviavl_data, 
+  aes(x = time)) + 
+  theme_minimal() + 
+  geom_histogram(data = correct_surviavl_data %>% filter(Group == "Macintosh #4 blade"), aes(fill = "Macintosh"), alpha = .5)+
+  geom_histogram(data = correct_surviavl_data %>% filter(Group == "Pentax AWS"), aes(fill = "Pentax"), alpha = .5) + 
+  labs(x = "Time in Seconds", 
+       y = "Count", 
+       fill = "Group")
+
+```
+
+@fig-explore-primary-km summarize time until successful intubation for the two groups. Kaplan Meier curves show 
+differences in times until intubation without adjusting for other potential predictors of the outcome variable. 
+@fig-explore-primary-km suggests that on average time to intubation was shorter in the Macintosh blade group, and 
+more intubations were labeled as successful. We will evaluate the difference between the two groups using regression methods discussed in the methods section. 
+
+```{r tabulation of survival outcome of interest, eval = F }
+#| label: tbl-surv-outcome-sum
+#| tbl-cap: "Summary of Outcome Variables for Each Group"
+
+
+correct_surviavl_data %>% 
+  group_by(Group) %>% 
+  summarize(n = n(), 
+            mean_time = paste(round(mean(time), 3), "(", round(sd(time), 3), ")"), 
+            success_rate = paste0(round(sum(s_f)/n(), 3) * 100, "%") 
+            ) %>% 
+  kable(booktabs = T, 
+        digits = 2, 
+        col.names = c("Group", "N", "Avg. Time (SD)", "% Successful Intubtaion"), 
+        align = c('l', 'c', 'c', 'c'))
+```
+
+
+
+```{r primary KM curve exploratory}
+#| label: fig-explore-primary-km
+#| fig-cap: "Kaplan-Meier Curves for Each Group"
+
+
+fit <- survfit(Surv(time, s_f) ~ Group, data = correct_surviavl_data)
+
+# Plot KM survival curve with ggplot2
+ggsurvplot(
+  fit,
+  data = correct_surviavl_data,
+#  risk.table = TRUE,        # Add risk table
+  pval = F,             # Add p-value to plot
+  conf.int = TRUE,          # Add confidence interval to plot
+  xlim = c(0, max(correct_surviavl_data$time)),  # Set x-axis limits
+  xlab = "Time",
+  ylab = "Survival Probability",
+  ggtheme = theme_minimal()
+)
+```
+
+```{r primary KM curve exploratory, eval = F}
+#| label: fig-explore-other-km
+#| fig-cap: "KM surviavl curves for the two leves of Cormack-Lehane grade "
+
+
+fit <- survfit(Surv(time, s_f) ~ view, data = correct_surviavl_data)
+
+# Plot KM survival curve with ggplot2
+ggsurvplot(
+  fit,
+  data = correct_surviavl_data,
+#  risk.table = TRUE,        # Add risk table
+  pval = TRUE,             # Add p-value to plot
+  conf.int = TRUE,          # Add confidence interval to plot
+  xlim = c(0, max(correct_surviavl_data$time)),  # Set x-axis limits
+  xlab = "Time",
+  ylab = "Survival Probability",
+  ggtheme = theme_minimal()
+)
+
+```
+
+We also examined the unadjusted differences between the two groups in terms of post-procedure ease of intubation score and presence of any sore throat symptoms. We compared average ease scores between the two groups using a one sided, t-test, the mean ease score in the Pentax AWS group was 13.9 points higher (p value = 0.012). We will investigate if the difference remains statistically significant after adjusting for other predictors. After the procedure, about 33% and 32% of patients had a sore throat symptom in the Macintosh #4 blade and Pentax AWS groups respectively. There was no statistically significant difference between the two proportions in each group using both t-test and z-test for odds the odds ratio. 
+
+Study also considered presence of bleeding and overall success of intubation as secondary outcomes. We do not 
+perform statistical analysis of the two variables due to high rarity of observed outcomes in a small sample size. 
+
+Bleeding occurred only in two patients, both were randomized to the Pentax AWS group. All but four intubations were considered successful, all unsuccessful attempts occurred in the Pentax AWS group as well. 
+
+```{r unadjusted differences for the secondary outcones, eval = F}
+
+correct_surviavl_data$sore_throat_binary <- ifelse(correct_surviavl_data$sore_throat == 0, 0, 1)
+
+correct_surviavl_data %>% 
+  group_by(Group) %>% 
+  summarise(mean(ease), 
+            mean(sore_throat_binary, na.rm = T))
+
+t.test(x = correct_surviavl_data %>% filter(Group == "Macintosh #4 blade") %>% select(ease) %>% unlist(), 
+       y = correct_surviavl_data %>% filter(Group != "Macintosh #4 blade") %>% select(ease) %>% unlist(), 
+       alternative = "less"
+       )
+
+glm(sore_throat_binary ~ Group, data = correct_surviavl_data, family = binomial())
+```
+
+# Methods 
+
+We used a Cox Proportional Hazard regression model to understand the average difference in time to successful intubation between the two groups, after adjusting for other relevant baseline covariates listed in @tbl-table-1. 
+No interactions between predictors were considered due to the small sample size. Model was used to obtain hazard ratios and normal 95% confidence intervals. Among the 99 available participants, 3 had missing values of Mallampati scores or BMI, and were not used in the regression model. While covariate imbalance was not detected using SMD's, we still incorporate a regression model analysis with predictors to account for any residual confounding that is present in the data set due to random sampling variation. 
+
+Presence of sore throat symptoms was analyzed using a logistic regression model. Ease of intubation was a variable with a 0-100 scale, and was treated as a continuous outcome variable. We used a Gaussian regression model with the identity link to obtain the adjusted difference in the average ease scores between the two groups. All analyses were conducted with complete case data and R version 4.3.1 software. 
+
+# Resutls 
+
+```{r nice names for the same terms in the model }
+c(
+           "Pentax AWS", 
+           "Age", 
+           "Sex", 
+           "BMI", 
+           "Mallampati Score", 
+           "Cormack-Lehane grade of glottic view"
+         ) -> 
+  model_term_names
+```
+
+### Primary Outcome 
+
+@tbl-primary-out displays hazard ratios for each model term using a Cox Proportional Hazards regression model. 
+The primary interest is the difference between the two groups. The hazard ratio for the Pentax AWS group compared to the Macintosh group was 0.17 (95% CI: 0.104, 0.29). This finding suggests a substantial reduction in the hazard of successful intubation for individuals in the Pentax AWS group compared to those in the Macintosh group. A hazard ratio of 0.17 implies that, on average, individuals in the Pentax AWS group have approximately 83% lower likelihood (risk) of achieving successful intubation at any given time compared to individuals in the Macintosh group. In the context of this  analysis, where a lower hazard is indicative of more favorable outcomes, these results indicate that the Macintosh group experiences successful intubation events more frequently and at an earlier stage in the 100 second window compared to the Pentax AWS group. The 95% confidence interval (0.104, 0.29) underscores the precision of this estimate. These findings highlight a statistically significant and clinically meaningful association, supporting the superiority of the Macintosh #4 blade in achieving successful intubation earlier in the observed time frame.
+
+```{r primary cox model summary of results }
+#| label: tbl-primary-out
+#| tbl-cap: "Cox Proportional Hazards Regression Analysis of Time to Succesful Intubation"
+
+cox_ph <- coxph(Surv(time = time, event = s_f) ~ Group + age + gender + bmi + mallampati + view, 
+                data = correct_surviavl_data)
+  
+# cox_ph <- coxph(Surv(time = time, event = s_f) ~ Group, data = correct_surviavl_data)
+
+cox_ph %>% tidy() %>% 
+  mutate(hz = round(exp(estimate), 3), 
+         
+         hz_ci = paste0(
+           "(", 
+           round(exp(estimate - 1.95 * std.error), 3), 
+           ", ", 
+           round(exp(estimate + 1.95 * std.error), 3), 
+           ")"
+         ), 
+         
+         term_new = model_term_names
+         ) %>% 
+  select(term_new, hz, hz_ci, p.value) %>% 
+  kable(booktabs = T, 
+        digits = 2, 
+        col.names = c("Model Term", "Hazard Ratio", "Normal 95% C.I.", "P-Value"), 
+        align = c('l', 'c', 'c', 'c')) %>% 
+  column_spec(1, width = "4cm") %>% 
+  kable_styling(latex_options = 'hold_position')
+```
+
+```{r primary cox efficiency comparison , eval = F}
+cox_ph <- coxph(Surv(time = time, event = s_f) ~ Group , data = 
+                  na.omit(correct_surviavl_data %>% select(time ,s_f ,Group , age , gender , bmi , mallampati , view))
+)
+
+cox_ph 
+
+# seems like we are loosing some efficiency but the hazard ratio changes pretty obviously 
+# efficiency is higher here, but the hz is totally different 
+```
+
+### Secondary Outcomes 
+
+#### Sore Throat  
+
+@tbl-secondary-out-sore-res displays hazard ratios for each model term using a Cox Proportional Hazards regression model. The primary interest is the difference between the two groups.
+The odds ratio for the occurrence of a sore throat event in the Pentax AWS group, compared to the reference Macintosh group, was estimated as 1.00 (95% CI: 0.4, 2.4). This result suggests that there is no statistically significant difference in the odds of experiencing a sore throat event between individuals in the Pentax AWS group and those in the Macintosh group. The odds ratio of 1.00 indicates that, on average, individuals in the Pentax AWS group have similar odds of developing a sore throat compared to individuals in the Macintosh group. The 95% confidence interval (0.4, 2.4) encompasses 1, indicating the uncertainty in the estimate, and suggests that the odds ratio is not significantly different from 1. 
+
+```{r ordinal logistic regression }
+#| label: tbl-secondary-out-sore-res
+#| tbl-cap: "Logistic Regression: secondary outcome, at least some sore throat"
+
+correct_surviavl_data$sore_throat_binary <- ifelse(correct_surviavl_data$sore_throat == 0, 0, 1)
+
+model <- glm(as.factor(sore_throat_binary) ~ Group + age + gender + bmi + mallampati + view,  
+             data = correct_surviavl_data, family = binomial)
+
+model %>% tidy() %>%
+  filter(term != "(Intercept)") %>% 
+  mutate(odds_r = round(exp(estimate), 1), 
+         
+         odds_r_ci = paste0(
+           "(", 
+           round(exp(estimate - 1.95 * std.error), 1), 
+           ", ", 
+           round(exp(estimate + 1.95 * std.error), 1), 
+           ")"
+         ), 
+         
+         term_new = model_term_names
+         ) %>% 
+  select(term_new, odds_r, odds_r_ci, p.value) %>% 
+  kable(booktabs = T, 
+        digits = 2, 
+        col.names = c("Model Term", "Odds Ratio", "Normal 95% C.I.", "P-Value"), 
+        align = c('l', 'c', 'c', 'c')) %>% 
+  column_spec(1, width = "4cm")
+```
+
+#### Ease of Intubation Score 
+
+The Gaussian GLM with an identity link (@tbl-secondary-out-ease-res) was employed to assess the ease of intubation variable, measured on a 0-100 scale, between the Pentax AWS and Macintosh groups. The estimated difference in the mean ease of intubation for the Pentax AWS group compared to the Macintosh group was 16.30 (95% CI: 6.2, 26.3). This result indicates a statistically significant and clinically meaningful difference in the mean ease of intubation scores between the two intubation methods. Specifically, individuals in the Pentax AWS group experienced, on average, a 16.30-point increase in ease of intubation compared to those in the Macintosh group. The narrow 95% confidence interval (6.2, 26.3) underscores the precision of this estimate. 
+
+```{r }
+#| label: tbl-secondary-out-ease-res
+#| tbl-cap: "Gaussian GLM: secondary outcome, ease"
+
+
+model <- lm(ease ~ Group + age + gender + bmi + mallampati + view,  
+            data = correct_surviavl_data)
+
+model %>% tidy() %>% 
+  filter(term != "(Intercept)") %>% 
+  mutate( ci = paste0(
+           "(", 
+           round(estimate - 1.95 * std.error, 1), 
+           ", ", 
+           round(estimate + 1.95 * std.error, 1), 
+           ")"
+         ), 
+         term_new = model_term_names
+         ) %>% 
+  select(term_new, estimate, ci, p.value) %>% 
+  kable(booktabs = T, 
+        digits = 2, 
+        col.names = c("Model Term", "Main Effect", "95% C.I.", "P-Value"), 
+        align = c('l', 'c', 'c', 'c')) %>% 
+  column_spec(1, width = "4cm")
+
+```
+
+### Discussion 
+
+The results of the Cox proportional hazards regression, logistic regression, and Gaussian GLM analyses provide important insights into the comparative effectiveness of the Pentax AWS and Macintosh laryngoscope tools for intubation. The Cox model revealed a significantly lower hazard of successful intubation with the Pentax AWS, indicating this device was associated with a delay in time-to-intubation compared to the Macintosh.
+
+However, the ease of intubation analysis showed the Pentax AWS had substantially lower scores on the 0-100 scale. Since lower scores indicate a harder intubation, this suggests the use of Pentax AWS was associated with intubations that were harder to perform. Given relative balance of other covariates at baseline, and lack of statistically significant accusations between covariates and the ease-of-intubation score, it is likely that the score increase is in fact due to the use of Pentax AWS.
+
+Several factors may explain these discrepant findings between objective and subjective outcomes. Importantly, the Pentax AWS is a novel device, whereas the Macintosh laryngoscope has been used for decades. The learning curve required to become proficient with new equipment could negatively impact initial intubation success rates, even if the device is easier to use once familiarity develops. Additionally, inherent differences between the devices in design, visualization, and handling may influence ease of use perceptions.
+
+
+### Conclusion 
+
+This analysis concludes that the Pentax AWS laryngoscope results in longer times-to-intubation and less frequent success. additionally, the use of Pentax AWS was associated with intubations that were evaluated as harder in the post-operative assessment. While Pentax AWS is a more technologically advanced tool, it is likely that he differences we observatory are due to the novelty of this instrument. This analysis may suggest that there is a learning curve that medcal professionals need to overcome. 

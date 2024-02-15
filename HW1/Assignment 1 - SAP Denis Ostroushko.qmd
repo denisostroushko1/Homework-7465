@@ -1,0 +1,109 @@
+---
+title: "Statistical Analysis Plan"
+author: "Denis Ostroushko"
+format: pdf
+execute: 
+  warning: false
+  message: false 
+  echo: false 
+---
+
+# Introduction
+
+This study aims to compare the Pentax AWS laryngoscope to the conventional Macintosh for intubation times and success rates in obese patients undergoing elective surgery. The research questions are whether the Pentax device achieves faster intubation and higher success compared to the Macintosh in this population.
+
+# Dataset
+
+The dataset contains 99 patients randomized to the Macintosh (n=49) or Pentax (n=50) groups. 
+Potential explanatory variables include age, gender, BMI. Primary outcome variable is time to successful intubation. 
+Successful outcome, Cormack-Lehane grade for glottic view , ease of intubation, blood staining, and sore throat severity
+are secondary outcomes.
+
+# Exploratory Analysis
+
+Summary statistics and histograms will explore distributions of independent, primary, and secondary outcomes. We will 
+present average values for continuous variables and proportion of outcomes for binary and categorical variables. Standard errors for sample means will be used to obtain Standardized Mean Differences (SDM) to evaluate covariate balance in two treatment groups. 
+Distribution of variables will be evaluated visually to learn about outlier or extreme values in the data. 
+
+# Methods
+
+We will use Cox PH regression model to compare time to incubation between groups to account for censoring introduced by 
+cross over to another device and imposed 100 second time cutoff. 
+Logistic regression will compare success rates. Gaussian and Poisson regression model will be used to study continuous and count secondary outcomes. All regression models will use age, sex, BMI, and group as independent variables. Any missing data will be addressed through multiple imputation chained equation. 
+Analysis will be done in R 4.3.1 at a 5% significance level.
+
+\newpage 
+
+# Tables
+
+```{r}
+options(knitr.kable.NA = '')
+```
+
+```{r}
+#| label: tbl-table1
+#| tbl-cap: "Table 1"
+
+
+library(knitr)
+library(kableExtra)
+
+vars = c("N", "Age", "BMI", "% Male", 
+            "Success Rate", "Time To Intibation", 
+            "% Censored",  "Cormack-Lehane grade", "% Easy Intibation", "% Exsessive Blood Amount")
+
+table1 <- 
+  data.frame(
+    var = vars, 
+    g1 = rep(NA, length(vars)),
+    g2 = rep(NA, length(vars)),
+    smd = rep(NA, length(vars))
+  )
+
+table1 %>% 
+  kable(booktabs = T, 
+        col.names = c("", "Macintosh Group", "Pentax AWS Group", "SMD"), 
+        align = 'l') %>% 
+  kable_styling("HOLD_position")
+
+```
+
+```{r}
+#| label: tbl-res1
+#| tbl-cap: "Cox PH Results Example"
+
+preds = c("Group AWS", "Age", "Sex", "BMI")
+
+res1 <- 
+  data.frame(
+    term = preds, 
+    hz = rep(NA, length(preds)),
+    p = rep(NA, length(preds))
+  )
+
+res1 %>% 
+  kable(booktabs = T, 
+        col.names = c("Predictor", "Hazard Ratio (95% CI)", "P-value"), 
+        align = 'l') %>% 
+  kable_styling("HOLD_position")
+```
+
+```{r}
+#| label: tbl-res3
+#| tbl-cap: "Success Rate Results Example"
+
+preds = c("Group AWS", "Age", "Sex", "BMI")
+
+res1 <- 
+  data.frame(
+    term = preds, 
+    hz = rep(NA, length(preds)),
+    p = rep(NA, length(preds))
+  )
+
+res1 %>% 
+  kable(booktabs = T, 
+        col.names = c("Predictor", "Odds Ratio (95% CI)", "P-value"), 
+        align = 'l') %>% 
+  kable_styling("HOLD_position")
+```
