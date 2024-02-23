@@ -1,6 +1,5 @@
 ---
-title: "Statisticail Analysis Plan"
-subtitle:  "Chromium infusion in hospitalized patients with severe insulin resistance"
+title: "Chromium infusion Analysis"
 author: "Denis Ostroushko"
 format: 
   pdf: 
@@ -66,7 +65,6 @@ process_data <- function(data){
 
 ```
 
-
 ```{r load and costruct the data }
 
 glucose <- read_csv("Cr glucose-1.csv") 
@@ -87,7 +85,7 @@ demog2 <- demog[,c(1:4, 16, 21, 34)]
 colnames(demog2) <- c("pt_id", "age", "sex", "weight_kg", "pre_insulin_use", "steroid", "start_cr_datetime")
 ```
 
-```{r}
+```{r add primary variable of interest}
 
 glucose_f_with_covariates <- 
   glucose_f %>% 
@@ -107,203 +105,307 @@ insulin_f_with_covariates <-
 
 ```
 
-```{r explore the data , eval = F}
 
-glucose_f_with_covariates %>% 
-  ggplot(aes(x = time_under_obs, y = blood_glucose)) + 
-  theme_classic() + 
-  geom_line(aes(group = pt_id),  alpha = 0.25) + 
-  geom_smooth(color = "red", se = T, aes(group = 1))
+# Introduction 
+
+Insulin resistance and persistent hyperglycemia are common issues encountered in hospitalized patients. While the majority of hyperglycemic patients respond adequately to intravenous insulin infusion rates of 2.0-5.0 mU/(kg*min), some patients exhibit severe insulin resistance resulting in sustained high blood glucose levels (>200 mg/dL) despite high-dose insulin therapy in excess of 20 units/hr (1). The mechanism for this severe insulin resistance is not fully understood but is likely multifactorial. 
+Persistent, severe hyperglycemia in hospitalized patients can lead to a number of adverse outcomes including impaired wound healing, higher infection rates, longer lengths of stay, and increased mortality. Therefore, alternative treatment strategies are needed for patients with severe insulin resistance to help improve glycemic control.
+
+One proposed therapy is intravenous chromium infusion. Chromium is an essential mineral that has been shown to enhance insulin activity and signaling. Small trials have demonstrated that intravenous chromium chloride infusions can decrease blood glucose levels. The exact mechanism of action of chromium in enhancing insulin activity is still under investigation but may work by potentiating insulin binding to receptors and improving phosphorylation cascades, and altering gene expression. Chromium treatment aims to overcome insulin resistance allowing blood glucose levels to decline at lower doses of insulin administration.
+
+
+# Dataset 
+
+The data come from a retrospective analysis of electronic medical records of hospitalized patients who received intravenous chromium infusion for severe insulin resistance. Records for patients were obtained between 2008 and 2011. Eligible patients were identified by searching diagnosis codes and medication administration records for the following inclusion criteria:
+
+* Age 18 years or older
+
+* Received a continuous intravenous insulin infusion at a rate exceeding 20 units/hour
+
+* Had persistence hyperglycemia with blood glucose levels sustained over 200 mg/dL while on high-dose insulin infusion
+
+* Were administered intravenous chromium chloride infusion at a dose of 20 mcg/hr for 10-15 hours (total dose 200-240 mcg) as an adjunctive therapy.
+
+Specific data collected from the hospital records of the 14 eligible patients meeting inclusion criteria included blood glucose values, insulin infusion rates, dates and times of glucose measurements and insulin rate changes, as well as any documented episodes of hypoglycemia. The number of glucose measurements per patient ranged from 26 to 61. Collected data captures insulin injection rates and blood glucose levels before, during, and after injection of chromium. 
+
+# Summary of Data 
+
+```{r}
+#| resutls: hide
+#| include: false
+
+
+CreateTableOne(
+  data = demog %>% 
+    rename(`Weight (kg)` = `weight (kg)`, 
+           `Prior Insulin Use` = `pre.insulin.use`), 
+  
+  vars = c("Age (yr)", "Sex", "Weight (kg)", "Prior Insulin Use", "Steroid use prior to or during Cr", "Outcome"), 
+  factorVars = c("Sex", "Prior Insulin Use", "Steroid use prior to or during Cr", "Outcome")
+) %>% 
+  print() -> tbl1
+```
+
+@tbl-tbl1 provides a summary of the population available for the study. While the number of patients is small, there is enough 
+observational data to make inferences about the blood glucose and insulin injection rates for this subset of patients. 
+
+```{r}
+#| label: tbl-tbl1
+#| tbl-cap: "Demograhic and Basic Clinical Characteristic of Patients"
+
+
+tbl1 %>% 
+  kable(booktabs = T)
+
+```
+
+@fig-gluc-1 visualizes the trajectory of blood glucose levels for patients of interest. @fig-ins-1 shows rates of insulin injection per hour. The timeline is separated into three periods: before, during, and after chromium injection. Patients begin this intense therapy because they are resistant to the insulin injections, which causes blood sugar levels to elevate. 
+Chromium therapy takes 10-12 hours to complete, according to the background information provided. While patients are on treatment, I speculate that chromium starts to interact with the molecules and begins to take effect, however, it is likely that all 10 hours are needed for the effect to manifest in full. Therefore, I decided to classify the timeline for each patient 
+into three categories, which will be the primary variable of interest in the analysis. 
+
+@fig-gluc-1 shows fairly stable average blood glucose levels in the period before and after the infusion. Due to the evident downward trend and changing nature of these clinical values, we do not analyze the data from this period. Moreover, the primary goal of the 
+analysis is to verify that the blood glucose levels decrease after the treatment is done. More observations in needed to allow for 
+covariate adjusting and assess the change of blood glucose variable over time. Same comments apply to the analysis of insulin injections level. 
+
+```{r explore the data}
+#| label: fig-gluc-1
+#| fig-cap: "Dahsed lines separate the timeline into Before/During/After Chromium Infusion Periods"
 
 glucose_f_with_covariates %>% 
   ggplot(aes(x = time_diff, y = blood_glucose)) + 
   theme_classic() + 
-  geom_vline(xintercept = 0, color = "black", linewidth = 1) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5)) + 
+  geom_vline(xintercept = 0, color = "black", linewidth = 1, linetype = "dashed") +
+  geom_vline(xintercept = 10*3600, color = "black", linewidth = 1, linetype = "dashed") + 
   geom_line(aes(group = pt_id),  alpha = 0.25) + 
-  geom_smooth(color = "red", se = T, aes(group = 1)) 
+  geom_smooth(color = "red", se = T, aes(group = 1)) + 
+  scale_x_continuous(labels = function(x){paste0(abs(round(x/3600)), 
+                                                 case_when(round(x/3600) < 0 ~ " Hr Before CR", 
+                                                           T ~ " Hr After CR")) %>% ifelse(round(x/3600) == 0, "CR Start", .) %>% {.}}, 
+                     breaks = seq(from = min(glucose_f_with_covariates$time_diff), 
+                                  to = max(glucose_f_with_covariates$time_diff), 
+                                  length.out = 10)) + 
+  
+  labs(y = "Blood Glucose Levels", 
+       x = "Observational Time", 
+       title = "Glucose Levels Timelines for Staudy Population") 
 ```
 
-```{r explore data 2, eval = F}
+```{r explore data 2}
+#| label: fig-ins-1
+#| fig-cap: "Dahsed lines separate the timeline into Before/During/After Chromium Infusion Periods"
+
 insulin_f_with_covariates %>% 
   ggplot(aes(x = time_diff, y = insulin_units_hr)) + 
   theme_classic() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5)) + 
+  geom_vline(xintercept = 0, color = "black", linewidth = 1, linetype = "dashed") +
+  geom_vline(xintercept = 10*3600, color = "black", linewidth = 1, linetype = "dashed") + 
   geom_line(aes(group = pt_id),  alpha = 0.25) + 
-  geom_smooth(color = "blue", se = T, aes(group = 1))
-
-insulin_f_with_covariates %>% 
-  ggplot(aes(x = time_diff, y = insulin_units_hr)) + 
-  theme_classic() + 
-  geom_vline(xintercept = 0, color = "black", linewidth = 1) + 
-  geom_vline(xintercept = 10*3600, color = "black", linewidth = 1) + 
-  geom_line(aes(group = pt_id),  alpha = 0.25) + 
-  geom_smooth(color = "blue", se = T, aes(group = 1)) 
-```
-
-```{r ,eval = F}
-##########################
-##########################
-# combine and then plot to see if the results are any different 
-
-rbind(
-  insulin_f %>% 
-    mutate(insulin_units_hr_scale = scale(insulin_units_hr), 
-           type = "insulin levels"
-           ) %>% 
-    select(-obs_id, -insulin_units_hr) %>% 
-    rename(measurement = insulin_units_hr_scale)
-  ,
-  glucose_f %>% 
-    mutate(blood_glucose_scale = scale(blood_glucose), 
-           type = "glucose levels"
-           ) %>% 
-    select(-obs_id,- blood_glucose) %>% 
-    rename(measurement = blood_glucose_scale)
-) %>% 
-  arrange(pt_id, datetime) %>% 
-  group_by(pt_id) %>% 
-  mutate(obs_id = 1:n()) -> combined_df
-
-ggplot(data = combined_df, 
-       aes(x = obs_id, y = measurement, group = pt_id, color = type)) + 
-  theme_classic() + 
-  geom_line(alpha = 0.25) + 
-  geom_smooth(aes(group = type), se = T)
-
-
-####################
-# combine the data in such a way that allows modeling of glucose as insuling 
-
-
-modeling_data = 
-  merge(
-    x = insulin_f %>% select(-date, -time, -obs_id), 
-    y = glucose_f %>% select(-date, -time, -obs_id),
-    by = c("pt_id", "datetime")
-  )
-
-modeling_data_full = 
-  merge(
-    x = insulin_f %>% select(-date, -time, -obs_id), 
-    y = glucose_f %>% select(-date, -time, -obs_id),
-    by = c("pt_id", "datetime"), 
-    all = T
-  )
-
-nrow(modeling_data_full)
-```
-
-```{r try and fit a model glucose, eval=F}
-
-glucose_gee <- geeglm(blood_glucose ~ poly(time_diff, 2) + age + sex + weight_kg + pre_insulin_use + steroid, 
-                      data = glucose_f_with_covariates, 
-                      id = pt_id,
-                      corstr = "independence")
-glucose_gee %>% tidy() %>% 
-  mutate(p.value = round(p.value, 5))
-
-plot_model(model = glucose_gee) + 
-  theme_classic()
-
-plot_model(model = glucose_gee, 
-           type = "eff", 
-           terms = "time_diff") + 
-  geom_vline(xintercept = 0, color = "black", linewidth = 1) + 
-  theme_classic()
-```
-
-```{r try and fit a model glucose with pre-post variable , eval=F}
-
-glucose_f_with_covariates$pre_post <- with(glucose_f_with_covariates, 
-                                           ifelse(time_diff <= 0, "Pre", "Post") %>% as.factor() %>% 
-                                             factor(., levels = c("Pre", "Post")))
-
-glucose_gee2 <- geeglm(blood_glucose ~ pre_post + age + sex + weight_kg + pre_insulin_use + steroid, 
-                      data = glucose_f_with_covariates, 
-                      id = pt_id,
-                      corstr = "independence")
-glucose_gee2 %>% tidy() %>% 
-  mutate(p.value = round(p.value, 5))
-
-plot_model(model = glucose_gee2, 
-           type = "eff", 
-           terms = "pre_post") + 
-  theme_classic()
-```
-
-```{r try model insulin, eval = F}
-##################################
-
-
-insulin_f_with_covariates$pre_post <- with(insulin_f_with_covariates, 
-                                           ifelse(time_diff <= 0, "Pre", "Post") %>% as.factor() %>% 
-                                             factor(., levels = c("Pre", "Post")))
-
-insulin_gee2 <- geeglm(insulin_units_hr ~ pre_post + age + sex + weight_kg + pre_insulin_use + steroid, 
-                      data = insulin_f_with_covariates, 
-                      id = pt_id,
-                      corstr = "independence")
-
-insulin_gee2 %>% tidy() %>% 
-  mutate(p.value = round(p.value, 5))
-
-plot_model(model = insulin_gee2, 
-           type = "eff", 
-           terms = "pre_post")
-
+  geom_smooth(color = "blue", se = T, aes(group = 1)) + 
+  scale_x_continuous( 
+    labels = function(x){paste0(abs(round(x/3600)), 
+                                                 case_when(round(x/3600) < 0 ~ " Hr Before CR", 
+                                                           T ~ " Hr After CR")) %>% ifelse(round(x/3600) == 0, "CR Start", .) %>% {.}}, 
+                     breaks = seq(from = min(insulin_f_with_covariates$time_diff), 
+                                  to = max(insulin_f_with_covariates$time_diff), 
+                                  length.out = 10)) + 
+  
+  labs(y = "Insulin/HR Rate Levels", 
+       x = "Observational Time", 
+       title = "Insultin Injection Rate Timelines for Staudy Population") 
 
 ```
 
-```{r try models that glucose with three periods, eval = F}
+# Methods 
+
+We will focus on two time periods: before and after chromium infusion. The period before infusion is defined as the time from the start of admission, including the last measurement of blood glucose or insulin injection level immediately preceding the recorded start of chromium infusion. There was a recorded time for the end of chromium infusion for each patient. According to the general guideline that an infusion is to be administered continuously for ten to twelve hours, we assume that the period after infusion starts when the time from the start of insulation crosses over the ten-hour cutoff. We make this decision assuming that ten hours is a long enough time period to normalize clinical values of interest within patients.
+
+Having patients' clinical values recorded multiple times introduces inherent correlation of blood glucose levels and injection rates within the same patients. No other assumptions on the sources of correlation were made. Fourteen patients who received this treatment were admitted between 2008 and 2011, and we assume that patients are inherently similar across these years. We acknowledge that over time, the treatment of patients, hospital settings, measuring machines, etc., can change. However, due to the small number of patients (clusters that are the basis of correlation in the data), we make such simplifying assumptions and do not test or account for further sources of correlation. Due to the small number of patients we carefully examine correlation structure of available observations to 
+enable accurate estimation of the variance of the main effects. We understand that GEE works best in larger samples, however, due to 
+high similarity of overall temporal patterns for patients we deem GEE appropriate for the analysis of the blood glucose levels. There is 
+more observations with more extreme of insulin injection rates, which is unfavorable. However, we carry out two identical analyses for the two clinical values for similarity of interpretation. 
+
+The primary models for blood glucose levels and insulin injection rates are Gaussian GEE models with an identity link and one variable: an indicator for the measurement taken before or after chromium infusion. As a sensitivity analysis, we evaluate the differences in the two time periods using age and sex as covariates. Results of the sensitivity analysis are given in the appendix. All analyses were carried out using R Software version 4.3.1.
+
+
+# Results 
+
+@tbl-gluc-main shows that the average blood glucose levels in the period before treatment for the 14 patients was about 315 units, 
+which decreased by about 161 units (p <0.001, 95% CI: -194;-127) in the period immediately after chromium infusion treatment. This 
+result confirms that there was a statistically significant decrease in the blood glucose levels on average. 
+
+```{r try models that glucose with three periods}
+#| label: tbl-gluc-main
+#| tbl-cap: "Effect of Treatment on the Blood Glucose Levels"
+#| 
 
 glucose_f_with_covariates <- 
   glucose_f_with_covariates %>% 
   
   mutate(period = case_when(time_diff <= 0 ~ "Pre", 
                             time_diff >= 10*3600 ~ "Post", 
-                            T ~ "Discard") %>% 
-           factor(., levels = c("Pre", "Discard", "Post")))
-
-nrow(glucose_f_with_covariates)
-nrow(glucose_f_with_covariates %>% filter(period != "Discard"))
+                            T ~ "Discard") ) %>% 
+  filter(period != "Discard") %>% 
+  mutate(period = factor(period, levels = c("Pre", "Post")))
 
 test_glucose_model <- 
   geeglm(
-    blood_glucose ~ period + age + sex + weight_kg + pre_insulin_use + steroid, 
+    blood_glucose ~ period , 
     data = glucose_f_with_covariates, 
     id = pt_id,
     corstr = "independence")
 
 test_glucose_model %>% tidy() %>% 
-  mutate(p.value = round(p.value, 5))
-
-plot_model(model = test_glucose_model, 
-           type = "eff", 
-           terms = "period")
+  mutate(p.value = case_when(p.value < 0.001 ~ "<0.001", 
+                             p.value < 0.01 ~ "<0.01", 
+                             T ~ as.factor(round(p.value, 2)) 
+                             ), 
+         term = c("Before Treatment", "Decrease Due to Treatment"), 
+         ci = paste0("(", 
+                     round(estimate - 1.96*std.error,2), "; ", 
+                     round(estimate + 1.96*std.error,2), 
+                     ")"
+                     )
+         ) %>%
+  select(term, estimate, ci, p.value) %>% 
+  kable(booktabs = T, 
+        col.names = c("", "Estiamte", "95% Normal CI", "P-value"), 
+        align = c('l', 'c', 'c', 'c'), 
+        digits = 2)%>% 
+  kable_styling(latex_options = 'hold_position')
 
 ```
 
-```{r try models that insulin with three periods, eval = F}
+
+tbl-ins-main shows that the average insulin injection rates per hour in the period immediately before before treatment for the 14 patients was about 22 units per hour, 
+which decreased by about 11 units (p <0.001, 95% CI: -18;-4) in the period immediately after chromium infusion treatment. This 
+result confirms that there was a statistically significant decrease in the insulin injection rates for these patients. 
+
+```{r try models that insulin with three periods}
+#| label: tbl-ins-main
+#| tbl-cap: "Effect of Treatment on the Insulin Injection Rates"
+#| 
 
 insulin_f_with_covariates <- 
   insulin_f_with_covariates %>% 
   
   mutate(period = case_when(time_diff <= 0 ~ "Pre", 
                             time_diff >= 10*3600 ~ "Post", 
-                            T ~ "Discard") %>% 
-           factor(., levels = c("Pre", "Discard", "Post")))
+                            T ~ "Discard") ) %>% 
+  filter(period != "Discard") %>% 
+  mutate(period = factor(period, levels = c("Pre", "Post")))
 
 test_insulin_model <- 
   geeglm(
-    insulin_units_hr ~ period + age + sex + weight_kg + pre_insulin_use + steroid, 
+    insulin_units_hr ~ period, 
     data = insulin_f_with_covariates, 
     id = pt_id,
     corstr = "independence")
 
 test_insulin_model %>% tidy() %>% 
-  mutate(p.value = round(p.value, 5))
-
-plot_model(model = test_insulin_model, 
-           type = "eff", 
-           terms = "period")
+  mutate(p.value = case_when(p.value < 0.001 ~ "<0.001", 
+                             p.value < 0.01 ~ "<0.01", 
+                             T ~ as.factor(round(p.value, 2)) 
+                             ), 
+         term = c("Before Treatment", "Decrease Due to Treatment"), 
+         ci = paste0("(", 
+                     round(estimate - 1.96*std.error,2), "; ", 
+                     round(estimate + 1.96*std.error,2), 
+                     ")"
+                     )
+         ) %>%
+  select(term, estimate, ci, p.value) %>% 
+  kable(booktabs = T, 
+        col.names = c("", "Estiamte", "95% Normal CI", "P-value"), 
+        align = c('l', 'c', 'c', 'c'), 
+        digits = 2)%>% 
+  kable_styling(latex_options = 'hold_position')
 
 ```
+
+# Discussion and Conclusion 
+
+Our retrospective study evaluated intravenous chromium infusion as a potential treatment for severe insulin resistance in hospitalized patients. Despite the small sample size of 14 patients, we found a statistically significant reduction in blood glucose levels (approximately 161 units) and insulin injection rates (around 11 units per hour) immediately after chromium infusion.
+
+Dividing the timeline into before, during, and after infusion periods allowed a focused analysis, emphasizing the impact during infusion. Visualizations of blood glucose trajectories and insulin rates supported the findings. Use of Gaussian Generalized Estimating Equation models was justified despite the small sample size due to similar overall temporal patterns among patients.
+
+While promising, caution is necessary due to the retrospective nature and limited sample size. Larger, prospective studies are required to validate these findings, assess long-term effects, and ensure safety. Investigating mechanisms underlying chromium's impact on insulin sensitivity would improve understanding.
+
+\newpage 
+
+# Appendix 
+
+### GEE for insulin levels with 
+
+@tbl-gluc-adj shows that the effect on treatment expressed as a decrease of the blood glucose levels was slightly larger compared to 
+the main model considered in the study. Confidence interval had the same width, suggesting that adjusting for age and sex does not 
+improve precision of the estimate. Additional adjusting reveals that on average blood glucose levels were lower for older participants in the study after adjusting for sex and observation period. Overall, adjustment for the two additional comparatives did not add to the primary goal of the study. 
+
+```{r glucose sensetivity test}
+#| label: tbl-gluc-adj 
+#| tbl-cap: "Effect of Treatment on the Blood Glucose Levels with Covariate Adjustment "
+
+test_glucose_model <- 
+  geeglm(
+    blood_glucose ~ period + age + sex , 
+    data = glucose_f_with_covariates, 
+    id = pt_id,
+    corstr = "independence")
+
+test_glucose_model %>% tidy() %>% 
+  mutate(p.value = case_when(p.value < 0.001 ~ "<0.001", 
+                             p.value < 0.01 ~ "<0.01", 
+                             T ~ as.factor(round(p.value, 2)) 
+                             ), 
+         term = c("Intercept", "Treatment Effect", "Age Effect", "Sex = Male Effect"), 
+         ci = paste0("(", 
+                     round(estimate - 1.96*std.error,2), "; ", 
+                     round(estimate + 1.96*std.error,2), 
+                     ")"
+                     )
+         ) %>%
+  select(term, estimate, ci, p.value) %>% 
+  kable(booktabs = T, 
+        col.names = c("", "Estiamte", "95% Normal CI", "P-value"), 
+        align = c('l', 'c', 'c', 'c'), 
+        digits = 2) %>% 
+  kable_styling(latex_options = 'hold_position')
+
+```
+
+@tbl-ins-adj shows that the effect of treatment on the insulin injection levels expressed through the decrease of about -11 units per hour was about the same, when compared to the original model in the main sections. Confidence interval had the same width, suggesting that adjusting for age and sex does not improve precision of the estimate.
+
+```{r insulin sensetivity test}
+#| label: tbl-ins-adj 
+#| tbl-cap: "Effect of Treatment on the Insulin Injection Rates with Covariate Adjustment "
+
+test_insulin_model <- 
+  geeglm(
+    insulin_units_hr ~ period + age + sex, 
+    data = insulin_f_with_covariates, 
+    id = pt_id,
+    corstr = "independence")
+
+test_insulin_model %>% tidy() %>% 
+  mutate(p.value = case_when(p.value < 0.001 ~ "<0.001", 
+                             p.value < 0.01 ~ "<0.01", 
+                             T ~ as.factor(round(p.value, 2)) 
+                             ), 
+         term = c("Intercept", "Treatment Effect", "Age Effect", "Sex = Male Effect"), 
+         ci = paste0("(", 
+                     round(estimate - 1.96*std.error,2), "; ", 
+                     round(estimate + 1.96*std.error,2), 
+                     ")"
+                     )
+         ) %>%
+  select(term, estimate, ci, p.value) %>% 
+  kable(booktabs = T, 
+        col.names = c("", "Estiamte", "95% Normal CI", "P-value"), 
+        align = c('l', 'c', 'c', 'c'), 
+        digits = 2)%>% 
+  kable_styling(latex_options = 'hold_position')
+
+```
+
+
