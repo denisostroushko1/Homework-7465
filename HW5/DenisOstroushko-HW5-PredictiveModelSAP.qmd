@@ -1,0 +1,195 @@
+---
+title: "Cancer Detection Using Biomarkers: SAP"
+subtitle: "Biomarkers for Predicting Prostate Cancer Recurrence"
+author: "Denis Ostroushko"
+format: 
+  pdf:
+    documentclass: article 
+    geometry: 
+    - a4paper 
+    - top=20mm
+    - left=20mm 
+execute: 
+  echo: false
+  message: false 
+  warning: false 
+header-includes: \usepackage{float}
+---
+
+```{r}
+options(knitr.kable.NA = '', 
+        scipen = 99999)
+
+
+library(tidyverse)
+library(kableExtra)
+```
+
+```{r}
+full_data <- read_csv("casestudy3_40genes_data.csv")
+full_data <- 
+  full_data %>% 
+  mutate(
+    outcome = case_when(biochem_failure == 1 & followup_time <= 5 ~ 1, 
+                        T ~ 0)
+  )
+
+```
+
+```{r data explore , eval = F}
+
+table(full_data$biochem_failure) # equal distribution 
+
+### summary 
+
+summary(full_data$followup_time) # so there are a whole bunch of dates with followup above 5 years 
+
+summary(full_data[full_data$biochem_failure == 0, ]$followup_time)
+summary(full_data[full_data$biochem_failure == 1, ]$followup_time)
+
+nrow(full_data %>% filter(biochem_failure == 1 & followup_time > 5)) / 
+  nrow(full_data %>% filter(biochem_failure == 1 )) # --> 17% of those who develop the biomarker, might need to overwrite them 
+
+full_data <- 
+  full_data %>% 
+  left_join(
+    y = full_data %>% select(gleason) %>% unique() %>% arrange(gleason) %>% mutate(gleason_id = 1:nrow(.)), 
+    by = "gleason"
+  )
+  
+
+ggplot(data = full_data, 
+       aes(x = gleason_id, y = biochem_failure)) + 
+  geom_point() + 
+  stat_smooth(method = "lm", color = "red") + 
+  stat_smooth()
+
+```
+
+# Introduction 
+
+Prostate cancer (PCa) stands as the most prevalent cancer among the male population in the United States. Typically, PCa tumors are identified through prostate-specific antigen (PSA) blood test screenings. However, an elevated PSA level can stem from various factors, necessitating a biopsy for confirmation. Alarmingly, research indicates that a significant portion of tumors, ranging from 50% to 62%, would remain unnoticed without screening, categorized as 'indolent.' These latent tumors might only manifest symptoms 7 to 14 years post-detection. The majority of cancers detected through PSA screening are localized and low-risk, characterized by a Gleason score of 6 or lower. 
+
+Upon detecting high PSA levels, a biopsy is often recommended. For localized, low-risk cancers, active surveillance, or "watchful waiting," is advocated, where treatment is administered only upon disease progression. However, for non-localized or high-risk cancers, prompt treatment via surgery or radiation is typically advised.
+
+Despite recommendations for active surveillance in low-risk cases, many opt for definitive therapy, such as surgery, often leading to adverse side effects. This inclination is fueled by discomfort among both patients and physicians in delaying treatment, despite the fact that some individuals with low-grade prostate cancer succumb to the disease.
+
+Furthermore, ambiguity surrounds the optimal course of action for men with moderate-grade disease (Gleason score = 7). Consequently, there is a pressing need to identify biomarkers that can predict PCa mortality and recurrence, particularly from initial biopsy results. With over 40 candidate biomarkers identified by various authors, the question arises: can these biomarkers, combined with clinical covariates, culminate in a predictive model for PCa recurrence within 5 years of prostatectomy? Moreover, does integrating biomarkers with clinical covariates enhance predictive accuracy compared to relying solely on clinical parameters? These questions underscore the significance of exploring novel approaches to improve PCa prognostication and treatment decision-making.
+
+# Data Set 
+
+The dataset comprises tumor samples obtained from 400 men who underwent radical prostatectomy for prostate cancer (PCa) at the University of Minnesota Medical Center between 1999 and 2008. Demographic and clinical data were extracted from medical records, encompassing variables such as age, preoperative PSA levels, Gleason score, and an indicator for non-localized tumors.
+
+Tumor samples were subjected to immunohistochemical (IHC) staining for various biomarkers. Our primary outcome of interest is PCa recurrence, defined as the time from prostatectomy to biochemical recurrence, with biochemical recurrence marked by a prostate-specific antigen (PSA) value of 0.2 ng/mL or higher. Time-to-recurrence was censored at the last contact date for participants who did not experience recurrence during the follow-up period of at least 5 years. This allows for the creation of a binary outcome variable, eliminating the need to address censoring.
+
+A set of 40 candidate biomarkers, standardized to have a standard deviation of 1, will be considered in our analysis. Additionally, clinical covariates such as age, preoperative PSA levels, Gleason score, and tumor localization status were extracted, all of which are known to be associated with PCa recurrence. This comprehensive dataset provides a robust foundation for investigating the predictive utility of biomarkers and clinical covariates in forecasting PCa recurrence following prostatectomy.
+ 
+
+```{r table one with clinical baseline data }
+#| include: false
+#| results: hide
+
+
+library(tableone)
+
+CreateTableOne(data = full_data %>% 
+                 rename(
+                   
+                 ), 
+               strata = "outcome", 
+               vars = c("preop_psa", "age", "stage_t_n_m", "gleason_score"), 
+               factorVars = "stage_t_n_m", 
+               test = F, 
+               smd = T
+               ) -> t1 
+
+printed_t1 = print(t1, smd = T
+                   )
+```
+
+
+
+```{r, fig.align='center'}
+#| label: tbl-table-one
+#| tbl-cap: "Baseline demograohic characteristics of the study sample"
+
+
+printed_t1 %>% 
+  {rownames(.) = c("N", "Mean PreOp. PSA (SD)", "Mean Age (SD)", "N localized tumor (%)", 
+                   "Mean Gleason Score (SD)"); 
+  colnames(.) = c("No Progression", "Progressed", "SMD"); 
+  .} %>% 
+  kable(booktabs = T, 
+        digits = 2, 
+        align = 'c')
+```
+
+# Methods 
+
+The primary aim of this analysis is to assess the predictive capability of statistical models containing solely clinical covariates against models integrating biomarker information. Our key focus lies in discerning which biomarkers significantly contribute to predictive power and distinguishing them from those that do not. Given the complexity of our dataset, we will explore both traditional regression techniques for binary outcomes and more adaptable tree-based methodologies such as Random Forest.
+
+To facilitate model development, we will construct and compare models encompassing varying numbers of biomarkers. Initially, baseline models will solely incorporate clinical predictors. Subsequently, we will develop and contrast these with Random Forest and logistic regression models. We aim to construct a parsimonious model with biomarkers, employing a LASSO logistic regression approach with shrinkage penalties solely applied to biomarkers. As an alternative, for the random forest we will conduct variable selection utilizing the mean decrease in Gini index for biomarkers.
+
+Our final suite of models will include logistic regression models incorporating clinical covariates alongside a ridge penalty applied exclusively to biomarkers. Additionally, a Random Forest model incorporating all variables will be included for comparison.
+
+Hyperparameters for each model type will be meticulously selected via cross-validation. For Random Forest, hyperparameter tuning will solely consider the number of trees and the number of variables utilized at each split.
+
+The outcomes of cross-validation on out-of-sample data will be detailed in the appendix and presented as supplementary material, providing rationale for our model selection procedures.
+
+Evaluation of all models will be based on two primary metrics: AUC (Area Under the Curve) and PPV (Positive Predictive Value). Given the balanced class distribution in our dataset (60% did not experience recurrence within 5 years), we anticipate specificity and sensitivity to demonstrate symmetrical behavior, with minimal impact on AUC of the ROC curve. PPV will be scrutinized to ensure predictive models allocate the smallest number of patients into the 'at-risk' category, thus minimizing unnecessary intervention. The cutoff for probability dichotomization will be determined based on Youden's index.
+
+AUC and PPV collected based on predictions on the testing data for all six models set will be compared using pairwise differences. To account for multiple comparison we will use Benjamini Hochberg correction controlling false discovery rates. Standard errors for point estimates will be obtained using bootstrap resampling of predicted values on the training data set. 
+
+For training purposes, 75% of the available data, equivalent to 300 observations, will be utilized, with the remaining 100 observations reserved for testing. Data partitioning will be conducted using class stratification to preserve class balance. Results for cross validation, in sample, and out of sample predictions will be delivered in tables like @tbl-resutls. 
+
+All analyses will be conducted using R version 4.3.1.
+
+```{r ppv-auc summary statistics }
+#| label: tbl-resutls
+#| tbl-cap: "Resust Table"
+
+
+matrix(nrow = 3, ncol = 4) %>% 
+  {rownames(.) <- c("Baseline covariates", 
+                    "Baseline covariates + some biomarkers",
+                    "Baseline covatiates + all biomarkers"); 
+  
+  colnames(.) <- c("AUC", "PPV", "AUC", "PPV"); 
+  .
+  } %>% 
+  kable(
+    booktabs = T
+  ) %>% 
+  add_header_above(c(" "= 1, "Regression Models" = 2, "Random Forest" = 2)) %>% 
+  column_spec(c(1,3), border_right = T) %>% 
+  add_footnote("Regression Model with some Biomarkers uses LASSO regularization to select biomarkers") %>% 
+  add_footnote("Final staisitics will have standard errors for estimates in parentheses")
+
+```
+
+```{r, eval = F}
+library(glmnet)
+
+# Generate some example data
+set.seed(123)
+n <- 100  # Number of samples
+p_clinical <- 6  # Number of clinical predictors
+p_potential <- 20  # Number of potential predictors
+X_clinical <- matrix(rnorm(n * p_clinical), ncol = p_clinical)
+X_potential <- matrix(rnorm(n * p_potential), ncol = p_potential)
+X <- cbind(X_clinical, X_potential)
+beta <- c(2, 3, 1.5, -2, 1, -3, rep(0, p_potential))  # True coefficients (6 non-zero, 20 zero)
+y <- X %*% beta + rnorm(n)  # Response variable
+
+# Set lambda parameter for regularization
+lambda <- 0.1
+
+# Create a matrix of penalty factors (1 for clinical predictors, lambda for potential predictors)
+penalty_factors <- c(rep(1, p_clinical), rep(lambda, p_potential))
+
+# Fit Lasso model with customized penalty factors
+lasso_model <- cv.glmnet(X, y, alpha = 1, penalty.factor = penalty_factors)
+
+# Print the coefficients
+print(coef(lasso_model))
+```
